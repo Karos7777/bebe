@@ -1,25 +1,529 @@
 
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Калькулятор Дней</title>
-    <link rel="stylesheet" href="style.css">
-    <!-- Подключаем скрипт Telegram Web Apps -->
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-</head>
-<body>
-    <div class="container">
-        <h1>Сколько лет осталось?</h1>
-        <div class="input-group">
-            <input type="number" id="yearsInput" placeholder="Количество лет" min="1">
-            <!-- Убрал select, так как он пока не используется для простой задачи -->
-        </div>
-        <button id="calculateButton">Рассчитать</button>
-        <div id="message">Нажмите "Рассчитать", чтобы увидеть результат.</div>
-    </div>
-    <script src="script.js"></script>
-</body>
-</html>
+import asyncio
+import logging
+import json
+import signal
+import sys
+import sqlite3
+from datetime import datetime, timedelta
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import CommandStart, Command
+from aiogram.types import WebAppInfo, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
+# --- Configuration ---
+BOT_TOKEN = "6740270464:AAEqH_0_M288GVHqD1YwFAYPIa6wXRSYpHg"
+WEB_APP_URL = "https://karos7777.github.io/bebe/"
+
+# Время ежедневного уведомления (по умолчанию 10:00)
+DAILY_NOTIFICATION_HOUR = 10
+DAILY_NOTIFICATION_MINUTE = 0
+
+# --- Logging ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# --- Database Setup ---
+def init_database():
+    """Инициализация базы данных"""
+    conn = sqlite3.connect('countdown_bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_countdowns (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            full_name TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            total_days INTEGER,
+            remaining_days INTEGER,
+            notification_time TEXT,
+            is_active BOOLEAN DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def save_countdown(user_id, username, full_name, days, notification_time="10:00"):
+    """Сохранение счетчика в базу данных"""
+    conn = sqlite3.connect('countdown_bot.db')
+    cursor = conn.cursor()
+    
+    start_date = datetime.now()
+    end_date = start_date + timedelta(days=days)
+    
+    cursor.execute('''
+        INSERT OR REPLACE INTO user_countdowns 
+        (user_id, username, full_name, start_date, end_date, total_days, remaining_days, notification_time, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ''', (
+        user_id, username, full_name,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        days, days, notification_time
+    ))
+    
+    conn.commit()
+    conn.close()
+
+def get_user_countdown(user_id):
+    """Получение счетчика пользователя"""
+    conn = sqlite3.connect('countdown_bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT * FROM user_countdowns 
+        WHERE user_id = ? AND is_active = 1
+    ''', (user_id,))
+    
+    result = cursor.fetchone()
+    conn.close()
+    return result
+
+def update_remaining_days(user_id, remaining_days):
+    """Обновление оставшихся дней"""
+    conn = sqlite3.connect('countdown_bot.db')
+    cursor = conn.cursor()
+    
+    if remaining_days <= 0:
+        cursor.execute('''
+            UPDATE user_countdowns 
+            SET remaining_days = 0, is_active = 0
+            WHERE user_id = ?
+        ''', (user_id,))
+    else:
+        cursor.execute('''
+            UPDATE user_countdowns 
+            SET remaining_days = ?
+            WHERE user_id = ?
+        ''', (remaining_days, user_id))
+    
+    conn.commit()
+    conn.close()
+
+def get_active_countdowns():
+    """Получение всех активных счетчиков"""
+    conn = sqlite3.connect('countdown_bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT user_id, username, full_name, start_date, end_date, total_days, remaining_days, notification_time
+        FROM user_countdowns 
+        WHERE is_active = 1 AND remaining_days > 0
+    ''')
+    
+    results = cursor.fetchall()
+    conn.close()
+    return results
+
+def stop_countdown(user_id):
+    """Остановка счетчика"""
+    conn = sqlite3.connect('countdown_bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        UPDATE user_countdowns 
+        SET is_active = 0
+        WHERE user_id = ?
+    ''', (user_id,))
+    
+    conn.commit()
+    conn.close()
+
+# --- Bot and Scheduler ---
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher()
+scheduler = AsyncIOScheduler()
+
+# --- Helper Functions ---
+def calculate_time_remaining(end_date_str):
+    """Подсчет точного времени до конца"""
+    end_date = datetime.fromisoformat(end_date_str)
+    now = datetime.now()
+    
+    if now >= end_date:
+        return 0, 0, 0, 0  # days, hours, minutes, seconds
+    
+    time_diff = end_date - now
+    days = time_diff.days
+    hours, remainder = divmod(time_diff.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    return days, hours, minutes, seconds
+
+def format_time_remaining(days, hours, minutes, seconds=None):
+    """Форматирование времени в читаемый вид"""
+    parts = []
+    
+    if days > 0:
+        if days == 1:
+            parts.append(f"{days} день")
+        elif 2 <= days <= 4:
+            parts.append(f"{days} дня")
+        else:
+            parts.append(f"{days} дней")
+    
+    if hours > 0:
+        if hours == 1:
+            parts.append(f"{hours} час")
+        elif 2 <= hours <= 4:
+            parts.append(f"{hours} часа")
+        else:
+            parts.append(f"{hours} часов")
+    
+    if minutes > 0:
+        if minutes == 1:
+            parts.append(f"{minutes} минута")
+        elif 2 <= minutes <= 4:
+            parts.append(f"{minutes} минуты")
+        else:
+            parts.append(f"{minutes} минут")
+    
+    if seconds is not None and len(parts) == 0:
+        if seconds == 1:
+            parts.append(f"{seconds} секунда")
+        elif 2 <= seconds <= 4:
+            parts.append(f"{seconds} секунды")
+        else:
+            parts.append(f"{seconds} секунд")
+    
+    if not parts:
+        return "Время вышло!"
+    
+    return " ".join(parts)
+
+# --- Scheduled Tasks ---
+async def daily_countdown_update():
+    """Ежедневное обновление счетчиков и отправка уведомлений"""
+    logger.info("Запуск ежедневного обновления счетчиков...")
+    
+    active_countdowns = get_active_countdowns()
+    
+    for countdown in active_countdowns:
+        user_id, username, full_name, start_date, end_date, total_days, remaining_days, notification_time = countdown
+        
+        try:
+            days, hours, minutes, seconds = calculate_time_remaining(end_date)
+            
+            if days <= 0 and hours <= 0 and minutes <= 0:
+                # Время вышло
+                update_remaining_days(user_id, 0)
+                message = (
+                    "🎉 <b>Время вышло!</b>\n\n"
+                    "Ваш обратный отсчет завершен! Надеюсь, вы достигли своей цели!"
+                )
+                await bot.send_message(user_id, message)
+            else:
+                # Обновляем оставшиеся дни
+                update_remaining_days(user_id, days)
+                
+                # Отправляем ежедневное уведомление
+                time_remaining = format_time_remaining(days, hours, minutes)
+                progress_bar = "█" * (10 - min(10, max(0, int((days / total_days) * 10))))
+                progress_bar += "░" * (10 - len(progress_bar))
+                
+                message = (
+                    f"⏰ <b>Ежедневное напоминание</b>\n\n"
+                    f"До конца осталось:\n"
+                    f"<b>{time_remaining}</b>\n\n"
+                    f"Прогресс: [{progress_bar}] {int(((total_days - days) / total_days) * 100)}%\n\n"
+                    f"Продолжайте двигаться к цели! 💪"
+                )
+                
+                # Кнопки управления
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📊 Подробная статистика", callback_data=f"stats_{user_id}")],
+                    [InlineKeyboardButton(text="🛑 Остановить отсчет", callback_data=f"stop_{user_id}")]
+                ])
+                
+                await bot.send_message(user_id, message, reply_markup=keyboard)
+                
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении счетчика для пользователя {user_id}: {e}")
+
+# --- Handlers ---
+@dp.message(CommandStart())
+async def send_welcome(message: types.Message):
+    """Обработчик команды /start"""
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username
+        full_name = message.from_user.full_name
+        
+        # Проверяем, есть ли активный счетчик
+        countdown = get_user_countdown(user_id)
+        
+        if countdown:
+            days, hours, minutes, seconds = calculate_time_remaining(countdown[4])  # end_date
+            if days <= 0 and hours <= 0 and minutes <= 0:
+                # Счетчик закончился
+                update_remaining_days(user_id, 0)
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="🗓️ Создать новый отсчет",
+                        web_app=WebAppInfo(url=WEB_APP_URL)
+                    )
+                ]])
+                await message.answer(
+                    f"Привет, {full_name}!\n\n"
+                    "Ваш предыдущий отсчет завершен. Создайте новый!",
+                    reply_markup=keyboard
+                )
+            else:
+                # Показываем текущий счетчик
+                time_remaining = format_time_remaining(days, hours, minutes, seconds)
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📊 Подробная статистика", callback_data=f"stats_{user_id}")],
+                    [InlineKeyboardButton(text="🛑 Остановить отсчет", callback_data=f"stop_{user_id}")],
+                    [InlineKeyboardButton(
+                        text="🗓️ Создать новый отсчет",
+                        web_app=WebAppInfo(url=WEB_APP_URL)
+                    )]
+                ])
+                await message.answer(
+                    f"Привет, {full_name}!\n\n"
+                    f"У вас активен обратный отсчет:\n"
+                    f"<b>{time_remaining}</b>\n\n"
+                    f"Выберите действие:",
+                    reply_markup=keyboard
+                )
+        else:
+            # Первый запуск или нет активного счетчика
+            web_app_button = InlineKeyboardButton(
+                text="🗓️ Создать обратный отсчет",
+                web_app=WebAppInfo(url=WEB_APP_URL)
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[web_app_button]])
+
+            await message.answer(
+                f"Привет, {full_name}!\n\n"
+                "Создайте обратный отсчет до важного события!\n"
+                "Я буду присылать вам ежедневные напоминания с точным временем до цели.",
+                reply_markup=keyboard
+            )
+    except Exception as e:
+        logger.error(f"Ошибка в send_welcome: {e}")
+        await message.answer("Произошла ошибка. Попробуйте еще раз.")
+
+@dp.message(Command("status"))
+async def show_status(message: types.Message):
+    """Показать текущий статус отсчета"""
+    try:
+        user_id = message.from_user.id
+        countdown = get_user_countdown(user_id)
+        
+        if not countdown:
+            await message.answer(
+                "У вас нет активного обратного отсчета.\n"
+                "Используйте /start чтобы создать новый."
+            )
+            return
+        
+        days, hours, minutes, seconds = calculate_time_remaining(countdown[4])
+        
+        if days <= 0 and hours <= 0 and minutes <= 0:
+            await message.answer("🎉 Ваш обратный отсчет завершен!")
+            update_remaining_days(user_id, 0)
+            return
+        
+        time_remaining = format_time_remaining(days, hours, minutes, seconds)
+        total_days = countdown[5]
+        progress = int(((total_days - days) / total_days) * 100)
+        
+        await message.answer(
+            f"📊 <b>Текущий статус отсчета:</b>\n\n"
+            f"⏰ Осталось: <b>{time_remaining}</b>\n"
+            f"📅 Всего дней: {total_days}\n"
+            f"📈 Прогресс: {progress}%\n"
+            f"🕙 Уведомления: {countdown[7]}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_status: {e}")
+        await message.answer("Произошла ошибка при получении статуса.")
+
+@dp.callback_query(F.data.startswith("stats_"))
+async def show_detailed_stats(callback: types.CallbackQuery):
+    """Показать подробную статистику"""
+    try:
+        user_id = int(callback.data.split("_")[1])
+        if user_id != callback.from_user.id:
+            await callback.answer("Это не ваш счетчик!", show_alert=True)
+            return
+        
+        countdown = get_user_countdown(user_id)
+        if not countdown:
+            await callback.answer("Счетчик не найден!", show_alert=True)
+            return
+        
+        days, hours, minutes, seconds = calculate_time_remaining(countdown[4])
+        start_date = datetime.fromisoformat(countdown[3])
+        end_date = datetime.fromisoformat(countdown[4])
+        total_days = countdown[5]
+        
+        elapsed_days = (datetime.now() - start_date).days
+        progress = int(((total_days - days) / total_days) * 100) if total_days > 0 else 100
+        
+        progress_bar = "█" * (progress // 10)
+        progress_bar += "░" * (10 - len(progress_bar))
+        
+        stats_text = (
+            f"📊 <b>Подробная статистика</b>\n\n"
+            f"🚀 Начало: {start_date.strftime('%d.%m.%Y в %H:%M')}\n"
+            f"🏁 Конец: {end_date.strftime('%d.%m.%Y в %H:%M')}\n\n"
+            f"⏰ Осталось: <b>{format_time_remaining(days, hours, minutes, seconds)}</b>\n"
+            f"📅 Прошло дней: {elapsed_days}\n"
+            f"📈 Прогресс: [{progress_bar}] {progress}%\n\n"
+            f"🔔 Время уведомлений: {countdown[7]}"
+        )
+        
+        await callback.message.edit_text(stats_text, reply_markup=callback.message.reply_markup)
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка в show_detailed_stats: {e}")
+        await callback.answer("Произошла ошибка!", show_alert=True)
+
+@dp.callback_query(F.data.startswith("stop_"))
+async def stop_countdown_handler(callback: types.CallbackQuery):
+    """Остановить обратный отсчет"""
+    try:
+        user_id = int(callback.data.split("_")[1])
+        if user_id != callback.from_user.id:
+            await callback.answer("Это не ваш счетчик!", show_alert=True)
+            return
+        
+        stop_countdown(user_id)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="🗓️ Создать новый отсчет",
+                web_app=WebAppInfo(url=WEB_APP_URL)
+            )
+        ]])
+        
+        await callback.message.edit_text(
+            "🛑 Обратный отсчет остановлен.\n\n"
+            "Вы можете создать новый отсчет в любое время.",
+            reply_markup=keyboard
+        )
+        await callback.answer("Счетчик остановлен!")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в stop_countdown_handler: {e}")
+        await callback.answer("Произошла ошибка!", show_alert=True)
+
+@dp.message(F.web_app_data)
+async def handle_web_app_data(message: types.Message):
+    """Обработка данных из Web App"""
+    logger.info(f"Получены данные от Web App: {message.web_app_data.data}")
+    try:
+        data = json.loads(message.web_app_data.data)
+        action = data.get("action")
+        
+        if action == "start_countdown":
+            user_id = message.from_user.id
+            username = message.from_user.username
+            full_name = message.from_user.full_name
+            
+            days = data.get("days")
+            notification_time = data.get("notification_time", "10:00")
+            
+            if not isinstance(days, (int, float)) or days <= 0:
+                await message.answer("❌ Некорректное количество дней!")
+                return
+            
+            # Останавливаем предыдущий счетчик, если есть
+            stop_countdown(user_id)
+            
+            # Создаем новый счетчик
+            save_countdown(user_id, username, full_name, int(days), notification_time)
+            
+            end_date = datetime.now() + timedelta(days=days)
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📊 Показать статистику", callback_data=f"stats_{user_id}")],
+                [InlineKeyboardButton(text="🛑 Остановить отсчет", callback_data=f"stop_{user_id}")]
+            ])
+            
+            await message.answer(
+                f"✅ <b>Обратный отсчет запущен!</b>\n\n"
+                f"🎯 Цель: через {int(days)} {'день' if days == 1 else 'дня' if 1 < days < 5 else 'дней'}\n"
+                f"📅 До: {end_date.strftime('%d.%m.%Y в %H:%M')}\n"
+                f"🔔 Уведомления: ежедневно в {notification_time}\n\n"
+                f"Я буду присылать вам ежедневные напоминания с точным временем до цели!",
+                reply_markup=keyboard
+            )
+            
+        else:
+            await message.answer("❌ Получены неизвестные данные от приложения.")
+            
+    except json.JSONDecodeError:
+        logger.error(f"Ошибка декодирования JSON: {message.web_app_data.data}")
+        await message.answer("❌ Ошибка при обработке данных.")
+    except Exception as e:
+        logger.error(f"Ошибка в handle_web_app_data: {e}")
+        await message.answer("❌ Произошла внутренняя ошибка.")
+
+# --- Graceful shutdown ---
+def signal_handler(signum, frame):
+    logger.info(f"Получен сигнал {signum}. Завершение работы...")
+    scheduler.shutdown()
+    sys.exit(0)
+
+# --- Main Execution ---
+async def main():
+    if BOT_TOKEN == "YOUR_BOT_TOKEN":
+        logger.error("Пожалуйста, укажите ваш BOT_TOKEN")
+        return
+    
+    # Инициализация базы данных
+    init_database()
+    
+    # Настройка планировщика
+    scheduler.add_job(
+        daily_countdown_update,
+        CronTrigger(hour=DAILY_NOTIFICATION_HOUR, minute=DAILY_NOTIFICATION_MINUTE),
+        id='daily_countdown'
+    )
+    scheduler.start()
+    
+    # Устанавливаем обработчики сигналов
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        logger.info("Запуск бота...")
+        await bot.delete_webhook(drop_pending_updates=True)
+        
+        bot_info = await bot.get_me()
+        logger.info(f"Бот запущен: @{bot_info.username} ({bot_info.full_name})")
+        logger.info(f"Планировщик настроен на {DAILY_NOTIFICATION_HOUR:02d}:{DAILY_NOTIFICATION_MINUTE:02d}")
+        
+        await dp.start_polling(bot, allowed_updates=['message', 'callback_query'])
+        
+    except asyncio.CancelledError:
+        logger.info("Получен сигнал остановки бота")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+    finally:
+        logger.info("Закрытие сессии бота...")
+        scheduler.shutdown()
+        await bot.session.close()
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"Ошибка при запуске: {e}")
