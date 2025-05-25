@@ -1,204 +1,57 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Обратный отсчет</title>
+    <title>Обратный Отсчет</title>
+    <link rel="stylesheet" href="style.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, var(--tg-theme-bg-color, #667eea) 0%, var(--tg-theme-secondary-bg-color, #764ba2) 100%);
-            color: var(--tg-theme-text-color, #000000);
-            min-height: 100vh;
-            box-sizing: border-box;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+</head>
+<body>
+    <div class="container">
+        <!-- Секция для создания нового отсчета (изначально может быть скрыта) -->
+        <div id="createCountdownSection">
+            <h1>Создать новый обратный отсчет</h1>
+            <div class="input-group">
+                <input type="number" id="daysInput" placeholder="Количество дней" min="1">
+            </div>
+            <div class="input-group">
+                <label for="notificationTimeInput" class="input-label">Уведомлять в:</label>
+                <input type="time" id="notificationTimeInput" value="10:00">
+            </div>
+            <button id="prepareCountdownButton">Подготовить к запуску</button>
+            <div id="creationMessage" class="message-area">Введите количество дней для отсчета.</div>
+        </div>
 
-        .container {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 30px;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            text-align: center;
-            width: 100%;
-            max-width: 400px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-
-        .header {
-            margin-bottom: 30px;
-        }
-
-        .header h1 {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            font-size: 1.8em;
-            margin: 0 0 10px 0;
-            font-weight: 700;
-        }
-
-        .header p {
-            color: #666;
-            margin: 0;
-            font-size: 0.9em;
-        }
-
-        .form-group {
-            margin-bottom: 25px;
-            text-align: left;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #333;
-            font-size: 0.9em;
-        }
-
-        .input-wrapper {
-            position: relative;
-        }
-
-        .input-wrapper input,
-        .input-wrapper select {
-            width: 100%;
-            padding: 15px;
-            border: 2px solid #e1e5e9;
-            border-radius: 12px;
-            font-size: 1em;
-            box-sizing: border-box;
-            transition: all 0.3s ease;
-            background: white;
-        }
-
-        .input-wrapper input:focus,
-        .input-wrapper select:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .input-wrapper .icon {
-            position: absolute;
-            right: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 1.2em;
-            color: #999;
-        }
-
-        .time-inputs {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-top: 15px;
-        }
-
-        .calculate-btn {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            padding: 15px 30px;
-            border: none;
-            border-radius: 12px;
-            font-size: 1.1em;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            width: 100%;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-        }
-
-        .calculate-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-        }
-
-        .calculate-btn:active {
-            transform: translateY(0);
-        }
-
-        .result {
-            margin-top: 25px;
-            padding: 20px;
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            border-radius: 15px;
-            color: white;
-            font-weight: 600;
-            font-size: 1.1em;
-            display: none;
-            animation: slideIn 0.5s ease;
-        }
-
-        .result.show {
-            display: block;
-        }
-
-        .result .countdown-display {
-            font-size: 1.3em;
-            margin: 10px 0;
-        }
-
-        .result .subtitle {
-            font-size: 0.9em;
-            opacity: 0.9;
-            margin-top: 10px;
-        }
-
-        .error {
-            color: #ff4757;
-            font-size: 0.9em;
-            margin-top: 10px;
-            display: none;
-        }
-
-        .error.show {
-            display: block;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .info-tip {
-            background: #e3f2fd;
-            color: #1976d2;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 0.85em;
-            margin-top: 15px;
-            border-left: 4px solid #2196f3;
-        }
-
-        /* Темная тема */
-        @media (prefers-color-scheme: dark) {
-            .container {
-                background: rgba(30, 30, 30, 0.95);
-                color: white;
-            }
-            
-            .form-group label {
-                color: #e0e0e0;
-            }
-            
-            .input-wrapper input,
-            .input-wrapper select {
-                background: #2a2a2a;
-                border-color: #444;
-                color: white;
-            }
+        <!-- Секция для отображения активного отсчета (изначально может быть скрыта) -->
+        <div id="activeCountdownSection" style="display: none;">
+            <h1>Активный отсчет</h1>
+            <div id="countdownDisplay" class="countdown-timer">
+                <div class="time-block">
+                    <span id="daysRemaining">00</span>
+                    <span class="time-label">дней</span>
+                </div>
+                <div class="time-block">
+                    <span id="hoursRemaining">00</span>
+                    <span class="time-label">часов</span>
+                </div>
+                <div class="time-block">
+                    <span id="minutesRemaining">00</span>
+                    <span class="time-label">минут</span>
+                </div>
+                <div class="time-block">
+                    <span id="secondsRemaining">00</span>
+                    <span class="time-label">секунд</span>
+                </div>
+            </div>
+            <p id="endDateDisplay" class="info-text"></p>
+            <p id="notificationTimeDisplay" class="info-text"></p>
+            <button id="stopCountdownButton">Остановить отсчет</button>
+            <button id="createNewCountdownButton" style="margin-top: 10px;">Создать новый (этот будет остановлен)</button>
+            <div id="activeMessage" class="message-area"></div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
