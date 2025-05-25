@@ -1,16 +1,14 @@
 document.addEventListener('DOMContentLoaded', function () {
-    console.log("WebApp Отсчет: DOMContentLoaded. Script version 3.2");
+    console.log("WebApp Отсчет: DOMContentLoaded. Script version 3.3"); // Версия обновлена
 
     const tg = window.Telegram?.WebApp;
 
-    // DOM элементы для секции создания
     const createCountdownSection = document.getElementById('createCountdownSection');
     const daysInput = document.getElementById('daysInput');
     const notificationTimeInput = document.getElementById('notificationTimeInput');
     const prepareCountdownButton = document.getElementById('prepareCountdownButton');
     const creationMessage = document.getElementById('creationMessage');
 
-    // DOM элементы для секции активного отсчета
     const activeCountdownSection = document.getElementById('activeCountdownSection');
     const daysRemainingEl = document.getElementById('daysRemaining');
     const hoursRemainingEl = document.getElementById('hoursRemaining');
@@ -22,24 +20,17 @@ document.addEventListener('DOMContentLoaded', function () {
     const createNewCountdownButton = document.getElementById('createNewCountdownButton');
     const activeMessage = document.getElementById('activeMessage');
 
-    let countdownInterval; // Для хранения интервала обновления таймера
-    let mainButtonClickHandler; // Для хранения текущего обработчика MainButton
+    let countdownInterval;
+    let currentMainButtonClickHandler; // Храним текущий обработчик MainButton
 
     function showSection(sectionName) {
-        if (sectionName === 'create') {
-            createCountdownSection.style.display = 'block';
-            activeCountdownSection.style.display = 'none';
-            if (tg?.MainButton) tg.MainButton.hide();
-        } else if (sectionName === 'active') {
-            createCountdownSection.style.display = 'none';
-            activeCountdownSection.style.display = 'block';
-            if (tg?.MainButton) tg.MainButton.hide();
-        }
+        createCountdownSection.style.display = (sectionName === 'create') ? 'block' : 'none';
+        activeCountdownSection.style.display = (sectionName === 'active') ? 'block' : 'none';
+        if (tg?.MainButton) tg.MainButton.hide();
     }
 
     function updateCountdownDisplay(endDateStr) {
         clearInterval(countdownInterval);
-
         const endDate = new Date(endDateStr);
 
         function calculateAndDisplay() {
@@ -48,81 +39,48 @@ document.addEventListener('DOMContentLoaded', function () {
 
             if (timeLeft <= 0) {
                 clearInterval(countdownInterval);
-                daysRemainingEl.textContent = '00';
-                hoursRemainingEl.textContent = '00';
-                minutesRemainingEl.textContent = '00';
-                secondsRemainingEl.textContent = '00';
+                daysRemainingEl.textContent = '00'; hoursRemainingEl.textContent = '00';
+                minutesRemainingEl.textContent = '00'; secondsRemainingEl.textContent = '00';
                 activeMessage.textContent = "Время вышло!";
                 return;
             }
-
-            const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
-            const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
-
-            daysRemainingEl.textContent = String(days).padStart(2, '0');
-            hoursRemainingEl.textContent = String(hours).padStart(2, '0');
-            minutesRemainingEl.textContent = String(minutes).padStart(2, '0');
-            secondsRemainingEl.textContent = String(seconds).padStart(2, '0');
+            const d = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
+            const h = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const m = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+            const s = Math.floor((timeLeft % (1000 * 60)) / 1000);
+            daysRemainingEl.textContent = String(d).padStart(2, '0');
+            hoursRemainingEl.textContent = String(h).padStart(2, '0');
+            minutesRemainingEl.textContent = String(m).padStart(2, '0');
+            secondsRemainingEl.textContent = String(s).padStart(2, '0');
         }
-
         calculateAndDisplay();
         countdownInterval = setInterval(calculateAndDisplay, 1000);
     }
-
-    // Функция для удаления предыдущего обработчика и добавления нового
-    function setMainButtonHandler(handler) {
+    
+    function setMainButtonOnClick(handler) {
         if (tg && tg.MainButton) {
-            // Удаляем предыдущий обработчик, если он был
-            if (mainButtonClickHandler) {
-                tg.MainButton.offClick(mainButtonClickHandler);
+            if (currentMainButtonClickHandler) {
+                tg.MainButton.offClick(currentMainButtonClickHandler);
             }
-            // Сохраняем и устанавливаем новый обработчик
-            mainButtonClickHandler = handler;
-            tg.MainButton.onClick(mainButtonClickHandler);
+            currentMainButtonClickHandler = handler;
+            tg.MainButton.onClick(currentMainButtonClickHandler);
         }
     }
 
-    // Функция для обработки сообщений от бота
-    function handleBotMessage(messageText) {
-        console.log("Получено сообщение от бота:", messageText);
-        
-        // Ищем JSON в сообщении (может быть обернут в <code> теги)
-        let jsonData = null;
-        
-        // Попытка найти JSON в тегах <code>
-        const codeMatch = messageText.match(/<code>(.*?)<\/code>/);
-        if (codeMatch) {
-            try {
-                jsonData = JSON.parse(codeMatch[1]);
-            } catch (e) {
-                console.log("Не удалось распарсить JSON из code тегов");
-            }
-        }
-        
-        // Если не нашли в тегах, попробуем распарсить весь текст
-        if (!jsonData) {
-            try {
-                jsonData = JSON.parse(messageText);
-            } catch (e) {
-                console.log("Сообщение не содержит валидного JSON");
-                return;
-            }
-        }
-        
-        console.log("Распарсенные данные от бота:", jsonData);
-        
-        if (jsonData.action === "countdown_started" && jsonData.endDate) {
+    // Функция для обработки данных, полученных от бота (например, через tg.onEvent('web_app_data_received', ...))
+    // или если бот ответит сообщением, содержащим JSON в <code> тегах.
+    function processBotData(data) {
+        console.log("Обработка данных от бота:", data);
+        if (data.action === "countdown_started" && data.endDate) {
             showSection('active');
-            updateCountdownDisplay(jsonData.endDate);
-            endDateDisplayEl.textContent = `Завершение: ${new Date(jsonData.endDate).toLocaleString('ru-RU')}`;
-            notificationTimeDisplayEl.textContent = `Уведомления в: ${jsonData.notificationTime || '10:00'}`;
+            updateCountdownDisplay(data.endDate);
+            endDateDisplayEl.textContent = `Завершение: ${new Date(data.endDate).toLocaleString('ru-RU')}`;
+            notificationTimeDisplayEl.textContent = `Уведомления в: ${data.notificationTime || '10:00'}`;
             if (tg?.MainButton) {
                 tg.MainButton.hideProgress();
                 tg.MainButton.hide();
             }
-        } else if (jsonData.action === "countdown_stopped") {
+        } else if (data.action === "countdown_stopped") {
             showSection('create');
             daysInput.value = '';
             notificationTimeInput.value = '10:00';
@@ -131,17 +89,126 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    // Инициализация Telegram Web App
     if (tg) {
         console.log("Telegram WebApp API доступно.");
         tg.ready();
         tg.expand();
+
+        // Слушаем событие получения данных от платформы (если бот использует answerWebAppQuery)
+        // Это более надежно, чем парсить сообщения чата.
+        tg.onEvent('web_app_data_received', function(eventData){
+            console.log('Получены данные через web_app_data_received:', eventData.data);
+            try {
+                const parsedData = JSON.parse(eventData.data);
+                processBotData(parsedData);
+            } catch (e) {
+                console.error('Ошибка парсинга данных из web_app_data_received:', e);
+            }
+        });
         
         const startParam = tg.initDataUnsafe?.start_param;
         if (startParam) {
             try {
                 const initialData = JSON.parse(decodeURIComponent(startParam));
                 console.log("Получены данные из start_param:", initialData);
-                if (initialData.action === "show_active_countdown" && initialData.endDate) {
-                    showSection('active');
-                    updateCountdownDisplay(initialData.endDate);
+                processBotData(initialData); // Используем общую функцию обработки
+            } catch (e) {
+                console.error("Ошибка парсинга start_param:", e);
+                showSection('create');
+            }
+        } else {
+            showSection('create');
+        }
+
+        // Настройка кнопки "Подготовить к запуску"
+        prepareCountdownButton.addEventListener('click', function() {
+            console.log("Кнопка 'Подготовить к запуску' нажата.");
+            const days = parseInt(daysInput.value, 10);
+            const notificationTime = notificationTimeInput.value;
+
+            if (daysInput.value.trim() === "" || isNaN(days) || days <= 0) {
+                creationMessage.textContent = 'Пожалуйста, введите корректное число дней.';
+                if (tg.MainButton) tg.MainButton.hide(); return;
+            }
+            if (!/^\d{2}:\d{2}$/.test(notificationTime)) {
+                 creationMessage.textContent = 'Пожалуйста, введите корректное время (ЧЧ:ММ).';
+                 if (tg.MainButton) tg.MainButton.hide(); return;
+            }
+            creationMessage.textContent = `Готовы? Нажмите кнопку Telegram внизу.`;
+            
+            tg.MainButton.setText(`Запустить на ${days} дн. в ${notificationTime}`);
+            tg.MainButton.show();
+            tg.MainButton.enable();
+
+            setMainButtonOnClick(function mainButtonStartHandler() {
+                console.log("MainButton для запуска отсчета нажата.");
+                tg.MainButton.showProgress(false); // Показать индикатор загрузки
+
+                const dataToSend = {
+                    action: "start_countdown",
+                    days: days,
+                    notification_time: notificationTime
+                };
+                console.log("Отправка данных боту:", dataToSend);
+
+                try {
+                    tg.sendData(JSON.stringify(dataToSend));
+                    // Не скрываем кнопку сразу, ждем ответа от бота или таймаута.
+                    // Если бот ответит через answerWebAppQuery, событие web_app_data_received обработает UI.
+                    // Если нет, то через некоторое время можно скрыть кнопку или показать сообщение.
+                    // tg.showAlert("Запрос отправлен. Ожидайте подтверждения."); // Можно использовать это
+                    setTimeout(() => { // Если долго нет ответа от web_app_data_received
+                        if (activeCountdownSection.style.display !== 'block') { // Если UI не обновился
+                             tg.MainButton.hideProgress();
+                             // tg.MainButton.hide(); // Можно и скрыть
+                             creationMessage.textContent = "Запрос отправлен. Если ничего не произошло, проверьте чат с ботом.";
+                        }
+                    }, 5000); // 5 секунд таймаут для ожидания ответа, который обновит UI
+
+                } catch (error) {
+                    console.error("Ошибка при вызове tg.sendData:", error);
+                    tg.showAlert("Не удалось отправить данные. Попробуйте еще раз.");
+                    tg.MainButton.hideProgress();
+                    tg.MainButton.enable(); // Оставляем кнопку для повторной попытки
+                }
+            });
+        });
+
+    } else { // Если tg API не доступно (например, открыто в обычном браузере)
+        console.warn("Telegram WebApp API не найдено. Работа в режиме отладки.");
+        showSection('create');
+        prepareCountdownButton.addEventListener('click', () => {
+            alert("Кнопка 'Подготовить к запуску' (режим отладки)");
+        });
+    }
+
+    // Кнопки в активной секции
+    stopCountdownButton.addEventListener('click', function() {
+        if (tg) {
+            tg.showConfirm("Вы уверены, что хотите остановить текущий отсчет?", function(confirmed) {
+                if (confirmed) {
+                    console.log("Отправка команды на остановку отсчета...");
+                    tg.sendData(JSON.stringify({ action: "stop_countdown_from_webapp" }));
+                    // Ожидаем, что бот пришлет данные через web_app_data_received для обновления UI
+                }
+            });
+        } else { alert("Остановка доступна только в Telegram."); }
+    });
+
+    createNewCountdownButton.addEventListener('click', function(){
+        if (tg) {
+            tg.showConfirm("Создание нового отсчета остановит текущий. Продолжить?", function(confirmed) {
+                if (confirmed) {
+                    clearInterval(countdownInterval);
+                    showSection('create');
+                    daysInput.value = '';
+                    notificationTimeInput.value = '10:00';
+                    creationMessage.textContent = "Введите данные для нового отсчета.";
+                }
+            });
+        } else {
+            showSection('create');
+            alert("Создание нового (режим отладки)");
+        }
+    });
+});
