@@ -1,153 +1,253 @@
-
 document.addEventListener('DOMContentLoaded', function () {
-    console.log("Версия скрипта: 1.1. DOMContentLoaded сработал.");
+    console.log("WebApp Отсчет: DOMContentLoaded. Script version 3.0");
 
-    // Попытка получить объект Telegram WebApp
-    // window.Telegram может быть undefined, если открыто не в Telegram
     const tg = window.Telegram?.WebApp;
 
-    if (tg) {
-        console.log("Telegram WebApp API доступно. tg:", tg);
-        try {
-            tg.ready(); // Сообщаем Telegram, что Web App готово
-            tg.expand();  // Растягиваем Web App на весь экран (если возможно)
-            console.log("tg.ready() и tg.expand() вызваны.");
-        } catch (e) {
-            console.error("Ошибка при вызове tg.ready() или tg.expand():", e);
+    // DOM элементы для секции создания
+    const createCountdownSection = document.getElementById('createCountdownSection');
+    const daysInput = document.getElementById('daysInput');
+    const notificationTimeInput = document.getElementById('notificationTimeInput');
+    const prepareCountdownButton = document.getElementById('prepareCountdownButton');
+    const creationMessage = document.getElementById('creationMessage');
+
+    // DOM элементы для секции активного отсчета
+    const activeCountdownSection = document.getElementById('activeCountdownSection');
+    const daysRemainingEl = document.getElementById('daysRemaining');
+    const hoursRemainingEl = document.getElementById('hoursRemaining');
+    const minutesRemainingEl = document.getElementById('minutesRemaining');
+    const secondsRemainingEl = document.getElementById('secondsRemaining');
+    const endDateDisplayEl = document.getElementById('endDateDisplay');
+    const notificationTimeDisplayEl = document.getElementById('notificationTimeDisplay');
+    const stopCountdownButton = document.getElementById('stopCountdownButton');
+    const createNewCountdownButton = document.getElementById('createNewCountdownButton'); // Кнопка в активной секции
+    const activeMessage = document.getElementById('activeMessage');
+
+    let countdownInterval; // Для хранения интервала обновления таймера
+
+    function showSection(sectionName) {
+        if (sectionName === 'create') {
+            createCountdownSection.style.display = 'block';
+            activeCountdownSection.style.display = 'none';
+            if (tg?.MainButton) tg.MainButton.hide();
+        } else if (sectionName === 'active') {
+            createCountdownSection.style.display = 'none';
+            activeCountdownSection.style.display = 'block';
+            if (tg?.MainButton) tg.MainButton.hide(); // Главная кнопка будет управляться отдельно для активного отсчета
         }
-    } else {
-        console.warn("Telegram WebApp API (window.Telegram.WebApp) не найдено. Приложение работает в режиме отладки (браузер?) или API не загрузилось.");
     }
 
-    const yearsInput = document.getElementById('yearsInput');
-    const calculateButton = document.getElementById('calculateButton');
-    const messageDiv = document.getElementById('message');
+    function updateCountdownDisplay(endDateStr) {
+        clearInterval(countdownInterval); // Очищаем предыдущий интервал, если был
 
-    // Проверка, найдены ли элементы
-    if (!yearsInput) {
-        console.error("ОШИБКА: Элемент с ID 'yearsInput' не найден!");
-        if (messageDiv) messageDiv.textContent = "Ошибка: поле ввода не найдено.";
-        return; // Прекращаем работу, если нет основного поля
-    }
-    if (!calculateButton) {
-        console.error("ОШИБКА: Элемент с ID 'calculateButton' не найден!");
-        if (messageDiv) messageDiv.textContent = "Ошибка: кнопка расчета не найдена.";
-        return; // Прекращаем работу, если нет кнопки
-    }
-    if (!messageDiv) {
-        console.error("ОШИБКА: Элемент с ID 'messageDiv' не найден!");
-        // Продолжаем, но без вывода сообщений
+        const endDate = new Date(endDateStr);
+
+        function calculateAndDisplay() {
+            const now = new Date();
+            const timeLeft = endDate - now;
+
+            if (timeLeft <= 0) {
+                clearInterval(countdownInterval);
+                daysRemainingEl.textContent = '00';
+                hoursRemainingEl.textContent = '00';
+                minutesRemainingEl.textContent = '00';
+                secondsRemainingEl.textContent = '00';
+                activeMessage.textContent = "Время вышло!";
+                // Здесь можно добавить логику для автоматического запроса на "завершение" отсчета у бота
+                // или просто дать пользователю возможность создать новый.
+                return;
+            }
+
+            const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+
+            daysRemainingEl.textContent = String(days).padStart(2, '0');
+            hoursRemainingEl.textContent = String(hours).padStart(2, '0');
+            minutesRemainingEl.textContent = String(minutes).padStart(2, '0');
+            secondsRemainingEl.textContent = String(seconds).padStart(2, '0');
+        }
+
+        calculateAndDisplay(); // Первоначальное отображение
+        countdownInterval = setInterval(calculateAndDisplay, 1000); // Обновление каждую секунду
     }
 
-    console.log("DOM элементы найдены:", { yearsInput, calculateButton, messageDiv });
+    // Инициализация Telegram Web App
+    if (tg) {
+        console.log("Telegram WebApp API доступно.");
+        tg.ready();
+        tg.expand();
+        
+        // Пытаемся получить данные о текущем отсчете при загрузке
+        // Для этого bot.py должен передавать эти данные в WebAppInfo URL
+        // или WebApp должен сам запросить их у бота после загрузки
+        // Пока упрощенный вариант: бот отправляет данные через web_app_data при ответе на /start, если есть отсчет.
+        // ИЛИ, если WebApp открывается повторно, Telegram может передать данные через tg.initDataUnsafe.start_param
+        // Этот start_param бот должен был установить при формировании WebAppInfo URL.
+        // Пример: WEB_APP_URL + "?start_param_data_json_url_encoded"
 
-    // Настройка MainButton (главной кнопки Telegram), если tg и MainButton доступны
-    if (tg && tg.MainButton) {
-        console.log("Настройка tg.MainButton...");
-        tg.MainButton.setText("Отправить результат боту");
+        const startParam = tg.initDataUnsafe?.start_param;
+        if (startParam) {
+            try {
+                const initialData = JSON.parse(decodeURIComponent(startParam));
+                console.log("Получены данные из start_param:", initialData);
+                if (initialData.action === "show_active_countdown" && initialData.endDate) {
+                    showSection('active');
+                    updateCountdownDisplay(initialData.endDate);
+                    endDateDisplayEl.textContent = `Завершение: ${new Date(initialData.endDate).toLocaleString('ru-RU')}`;
+                    notificationTimeDisplayEl.textContent = `Уведомления в: ${initialData.notificationTime || '10:00'}`;
+                } else {
+                    showSection('create');
+                }
+            } catch (e) {
+                console.error("Ошибка парсинга start_param:", e);
+                showSection('create');
+            }
+        } else {
+             // Если start_param нет, значит, это первый запуск или бот не передал данные
+             // Показываем форму создания по умолчанию. Бот может прислать данные позже через web_app_data.
+            console.log("start_param не найден, показываем форму создания.");
+            showSection('create');
+        }
+
+
+        // Настройка MainButton (главная кнопка Telegram)
+        tg.MainButton.setText("Запустить отсчет");
         tg.MainButton.hide(); // Сначала скрываем
 
         tg.MainButton.onClick(function() {
             console.log("tg.MainButton нажата.");
-            // Убедимся, что yearsInput.value доступно
-            if (!yearsInput || typeof yearsInput.value === 'undefined') {
-                console.error("Ошибка: yearsInput.value недоступно при клике на MainButton.");
-                tg.showAlert('Ошибка: не удалось прочитать значение лет.');
-                return;
-            }
+            const days = parseInt(daysInput.value, 10);
+            const notificationTime = notificationTimeInput.value;
 
-            const years = parseFloat(yearsInput.value);
-            if (isNaN(years) || years <= 0) {
-                console.log("MainButton: Некорректный ввод лет:", yearsInput.value);
-                tg.showAlert('Пожалуйста, введите корректное количество лет в поле на странице.');
+            if (isNaN(days) || days <= 0) {
+                tg.showAlert('Пожалуйста, введите корректное количество дней.');
                 return;
             }
-            const days = Math.round(years * 365);
+            if (!/^\d{2}:\d{2}$/.test(notificationTime)) {
+                tg.showAlert('Пожалуйста, введите корректное время для уведомлений (ЧЧ:ММ).');
+                return;
+            }
 
             const dataToSend = {
-                action: "calculate_days",
-                years: years,
-                days: days
+                action: "start_countdown",
+                days: days,
+                notification_time: notificationTime
             };
             console.log("Отправка данных боту:", dataToSend);
             tg.sendData(JSON.stringify(dataToSend));
-            // tg.close(); // Можно раскомментировать, если нужно закрывать WebApp после отправки
+            // После успешной отправки бот должен прислать обновленные данные,
+            // и WebApp должен переключиться на отображение активного отсчета.
+            // Это можно сделать через tg.onEvent('web_app_data_received', ...)
+            // или бот может отправить команду на перезагрузку WebApp с новыми start_param.
         });
-        console.log("Обработчик для tg.MainButton установлен.");
+
     } else {
-        console.warn("tg.MainButton не доступна. Функциональность главной кнопки Telegram будет отключена.");
+        console.warn("Telegram WebApp API не найдено. Работа в режиме отладки.");
+        showSection('create'); // По умолчанию показываем создание
     }
 
 
-    calculateButton.addEventListener('click', function() {
-        console.log("Кнопка 'Рассчитать' нажата!");
+    // Обработчик для кнопки "Подготовить к запуску" (в секции создания)
+    prepareCountdownButton.addEventListener('click', function() {
+        console.log("Кнопка 'Подготовить к запуску' нажата.");
+        const days = parseInt(daysInput.value, 10);
+        const notificationTime = notificationTimeInput.value;
 
-        const yearsString = yearsInput.value;
-        console.log("Значение из поля 'yearsInput':", `"${yearsString}"` , "(тип:", typeof yearsString + ")");
-
-        // Проверка, что значение не пустое
-        if (yearsString.trim() === "") {
-            console.log("Поле ввода пустое.");
-            if (messageDiv) {
-                messageDiv.textContent = 'Пожалуйста, введите количество лет.';
-                messageDiv.style.color = 'var(--tg-theme-destructive-text-color, red)';
-            }
-            if (tg && tg.MainButton) tg.MainButton.hide();
+        if (daysInput.value.trim() === "") {
+            creationMessage.textContent = 'Пожалуйста, введите количество дней.';
+            if (tg?.MainButton) tg.MainButton.hide();
             return;
         }
-
-        const years = parseFloat(yearsString);
-        console.log("Значение после parseFloat:", years, "(тип:", typeof years + ")");
-
-        if (isNaN(years) || years <= 0) {
-            console.log("Некорректный ввод: NaN или <= 0.");
-            if (messageDiv) {
-                messageDiv.textContent = 'Пожалуйста, введите корректное положительное число лет.';
-                messageDiv.style.color = 'var(--tg-theme-destructive-text-color, red)';
-            }
-            if (tg && tg.MainButton) tg.MainButton.hide(); // Скрываем кнопку Telegram, если ввод неверный
+        if (isNaN(days) || days <= 0) {
+            creationMessage.textContent = 'Введите корректное положительное число дней.';
+            if (tg?.MainButton) tg.MainButton.hide();
             return;
         }
-
-        console.log("Ввод корректный. Расчет дней...");
-        const days = Math.round(years * 365);
-        if (messageDiv) {
-            messageDiv.textContent = `Это примерно ${days} дней.`;
-            messageDiv.style.color = 'var(--tg-theme-text-color, #000000)'; // Стандартный цвет текста
+        if (!/^\d{2}:\d{2}$/.test(notificationTime)) {
+             creationMessage.textContent = 'Введите корректное время (ЧЧ:ММ).';
+             if (tg?.MainButton) tg.MainButton.hide();
+             return;
         }
 
-        // Показываем и активируем главную кнопку Telegram, если tg доступно
+        creationMessage.textContent = `Готовы запустить отсчет на ${days} дней, уведомления в ${notificationTime}. Нажмите кнопку Telegram внизу.`;
         if (tg && tg.MainButton) {
-            console.log("Обновление и показ tg.MainButton.");
-            const buttonText = `Отправить ${days} дней боту`;
-            const buttonColor = tg.themeParams?.button_color || '#007bff';
-            const buttonTextColor = tg.themeParams?.button_text_color || '#ffffff';
-            
-            tg.MainButton.setParams({
-                text: buttonText,
-                color: buttonColor,
-                text_color: buttonTextColor,
-                is_active: true,
-                is_visible: true
-            });
-            // tg.MainButton.show(); // setParams с is_visible: true должен сработать
-            // tg.MainButton.enable(); // setParams с is_active: true должен сработать
-            console.log(`MainButton настроена: text="${buttonText}", color="${buttonColor}", textColor="${buttonTextColor}"`);
-        } else {
-            console.log(`Расчет завершен: ${days} дней. (tg.MainButton не доступна для отображения)`);
-            // Если отлаживаем в браузере, можно вывести alert
-            // alert(`Результат: ${days} дней. (Кнопка Telegram не активна)`);
+            tg.MainButton.setText(`Запустить на ${days} дн. в ${notificationTime}`);
+            tg.MainButton.show();
+            tg.MainButton.enable();
         }
     });
-    console.log("Обработчик для кнопки 'Рассчитать' установлен.");
 
-    // Дополнительная информация для отладки
-    if (tg) {
-        console.log("Параметры темы Telegram (tg.themeParams):", tg.themeParams);
-        console.log("Данные инициализации (tg.initDataUnsafe):", tg.initDataUnsafe);
-        if (!tg.initDataUnsafe?.user) {
-            console.warn("Данные пользователя (tg.initDataUnsafe.user) отсутствуют.");
+    // Обработчик для кнопки "Остановить отсчет" (в активной секции)
+    stopCountdownButton.addEventListener('click', function() {
+        console.log("Кнопка 'Остановить отсчет' нажата.");
+        if (tg) {
+            tg.showConfirm("Вы уверены, что хотите остановить текущий отсчет?", function(confirmed) {
+                if (confirmed) {
+                    const dataToSend = { action: "stop_countdown_from_webapp" };
+                    console.log("Отправка команды на остановку:", dataToSend);
+                    tg.sendData(JSON.stringify(dataToSend));
+                    // После этого бот должен подтвердить остановку и WebApp должен перейти в режим создания.
+                    clearInterval(countdownInterval);
+                    showSection('create');
+                    daysInput.value = '';
+                    notificationTimeInput.value = '10:00';
+                    creationMessage.textContent = "Отсчет остановлен. Можете создать новый.";
+                    if(tg.MainButton) tg.MainButton.hide();
+                }
+            });
+        } else {
+            alert("Функция остановки доступна только в Telegram.");
         }
+    });
+
+    // Обработчик для кнопки "Создать новый" (в активной секции)
+    createNewCountdownButton.addEventListener('click', function(){
+        console.log("Кнопка 'Создать новый отсчет' (из активной секции) нажата.");
+         if (tg) {
+            tg.showConfirm("Создание нового отсчета остановит текущий. Продолжить?", function(confirmed) {
+                if (confirmed) {
+                    clearInterval(countdownInterval);
+                    showSection('create');
+                    daysInput.value = '';
+                    notificationTimeInput.value = '10:00';
+                    creationMessage.textContent = "Введите данные для нового отсчета.";
+                    if(tg.MainButton) tg.MainButton.hide();
+                    // Не отправляем команду stop_countdown_from_webapp здесь,
+                    // т.к. запуск нового отсчета в bot.py уже должен останавливать старый.
+                }
+            });
+        } else {
+            alert("Эта функция доступна только в Telegram.");
+            showSection('create'); // Для отладки в браузере
+        }
+    });
+    
+    // Слушаем данные от бота (если он их шлет после обработки MainButton)
+    if (tg) {
+        tg.onEvent('web_app_data_received', function(eventData){
+            console.log('Получены данные от бота через web_app_data_received:', eventData.data);
+            try {
+                const data = JSON.parse(eventData.data);
+                if (data.action === "countdown_started" && data.endDate) {
+                    showSection('active');
+                    updateCountdownDisplay(data.endDate);
+                    endDateDisplayEl.textContent = `Завершение: ${new Date(data.endDate).toLocaleString('ru-RU')}`;
+                    notificationTimeDisplayEl.textContent = `Уведомления в: ${data.notificationTime || '10:00'}`;
+                    if(tg.MainButton) tg.MainButton.hide(); // Скрываем кнопку "Запустить" после успешного запуска
+                } else if (data.action === "countdown_stopped") {
+                    showSection('create');
+                    daysInput.value = '';
+                    notificationTimeInput.value = '10:00';
+                    creationMessage.textContent = "Отсчет остановлен. Можете создать новый.";
+                    if(tg.MainButton) tg.MainButton.hide();
+                }
+                 // Добавь другие обработчики, если бот будет слать другие типы данных
+            } catch (e) {
+                console.error('Ошибка парсинга данных от бота:', e);
+            }
+        });
     }
+
 });
 
